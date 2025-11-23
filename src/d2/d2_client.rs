@@ -1,6 +1,6 @@
-use crate::d2_data::{get_act, get_object_class, npc_is_useless, object_is_useless};
-use crate::d2_ptrs::D2Pointers;
-use crate::d2_structs::*;
+use crate::d2::d2_data::{get_act, get_object_class, npc_is_useless, object_is_useless};
+use crate::d2::d2_ptrs::{D2Pointers, define_offsets};
+use crate::d2::d2_structs::*;
 use crate::map::Map;
 use serde_json::{json, Value};
 use std::ffi::CStr;
@@ -37,7 +37,7 @@ impl D2Client {
             .map_err(|e| format!("Failed to set directory: {}", e))?;
 
         // Define offsets
-        crate::d2_ptrs::define_offsets(&mut self.ptrs)?;
+        define_offsets(&mut self.ptrs)?;
         log::debug!("Offsets defined");
 
         // Initialize D2

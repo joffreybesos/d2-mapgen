@@ -1,13 +1,11 @@
-mod d2_client;
-mod d2_data;
-mod d2_ptrs;
-mod d2_structs;
+mod d2;
 mod map;
 mod logger;
 
+use crate::d2::d2_client::D2Client;
+use crate::d2::d2_data::get_act;
+
 use clap::Parser;
-use d2_client::D2Client;
-use d2_data::get_act;
 use log::LevelFilter;
 use serde_json::json;
 use std::io::{self, BufRead};

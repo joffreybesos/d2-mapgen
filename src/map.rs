@@ -2,10 +2,6 @@ const MAP_SIZE: usize = 1500;
 const MAP_ARRAY_SIZE: usize = MAP_SIZE * MAP_SIZE;
 
 const MAP_DATA_INVALID: i32 = -1;
-const _MAP_DATA_CLEANED: i32 = 11110;
-const _MAP_DATA_FILLED: i32 = 11111;
-const _MAP_DATA_THICKENED: i32 = 11113;
-const _MAP_DATA_AVOID: i32 = 11115;
 
 pub struct Map {
     data: Vec<i32>,

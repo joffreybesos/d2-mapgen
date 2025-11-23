@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::d2_structs::*;
+use crate::d2::d2_structs::*;
 use std::os::raw::c_char;
 use windows::Win32::Foundation::HMODULE;
 use windows::core::PCSTR;
@@ -113,14 +113,14 @@ unsafe fn get_dll_offset(dll_name: &str, offset: i32) -> Option<usize> {
 
     
     // Try to get already loaded module first
-    let h_mod = match GetModuleHandleA(pcstr) {
+    let mut h_mod = match GetModuleHandleA(pcstr) {
         Ok(handle) => handle,
         Err(_) => HMODULE(0),
     };
 
     // If not loaded, try to load it
-    // if h_mod.0 == 0 {
-        let h_mod = match LoadLibraryA(pcstr) {
+    if h_mod.0 == 0 {
+        h_mod = match LoadLibraryA(pcstr) {
             Ok(handle) => handle,
             Err(e) => {
                 log::error!(
@@ -131,7 +131,7 @@ unsafe fn get_dll_offset(dll_name: &str, offset: i32) -> Option<usize> {
                 return None;
             }
         };
-    // }
+    }
 
     if h_mod.0 == 0 {
         log::error!("Failed to load DLL: {}", dll_name.trim_end_matches('\0'));
