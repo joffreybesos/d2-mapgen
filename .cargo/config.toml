@@ -1,0 +1,3 @@
+# Default to 32-bit Windows build to match D2's 32-bit DLLs
+[build]
+target = "i686-pc-windows-msvc"
