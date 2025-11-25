@@ -1,14 +1,14 @@
 mod d2;
 mod map;
 mod logger;
+mod json;
 
 use crate::d2::d2_client::D2Client;
 use crate::d2::d2_data::get_act;
+use crate::json::SeedData;
 
 use clap::Parser;
 use log::LevelFilter;
-use serde_json::json;
-use std::io::{self, BufRead};
 use std::time::Instant;
 
 use crate::logger::configure_logging;
@@ -38,32 +38,78 @@ struct Args {
     #[arg(short, long)]
     map: Option<u32>,
 
+    /// Save to path
+    #[arg(short, long)]
+    json_path: Option<String>,
+
     /// Increase logging level
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
 }
 
-fn dump_info(seed: u32, difficulty: u32, act_id: Option<i32>, map_id: Option<u32>) {
-    let mut info = json!({
-        "type": "info",
-        "seed": seed,
-        "difficulty": difficulty,
-    });
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
 
-    if let Some(act) = act_id {
-        if let Some(obj) = info.as_object_mut() {
-            obj.insert("act".to_string(), json!(act));
+    // Set up logging
+    let log_level = match args.verbose {
+        0 => LevelFilter::Info,
+        1 => LevelFilter::Debug,
+        _ => LevelFilter::Trace,
+    };
+
+    configure_logging(log_level);
+
+    log::info!("d2-map starting, version: {}", VERSION);
+
+    if args.game_path.is_none() {
+        eprintln!("Usage: d2-map <GAME_PATH> [OPTIONS]");
+        eprintln!();
+        eprintln!("Options:");
+        eprintln!("  -s, --seed <SEED>           Map Seed");
+        eprintln!("  -d, --difficulty <DIFF>     Game Difficulty [0: Normal, 1: Nightmare, 2: Hell]");
+        eprintln!("  -a, --act <ACT>             Dump a specific act [0-4]");
+        eprintln!("  -m, --map <MAP>             Dump a specific Map");
+        eprintln!("  -j, --json-path <PATH>      Save output to specified path");
+        eprintln!("  -v, --verbose               Increase logging level");  
+        eprintln!();
+        eprintln!("Examples:");
+        eprintln!("  d2-map /path/to/d2 --seed 1122334 --difficulty 0 --act 0");
+        eprintln!("  d2-map /path/to/d2 --seed 1122334 --difficulty 2");
+        std::process::exit(1);
+    }
+
+    let game_path = args.game_path.unwrap();
+
+    let json_path = args.json_path.unwrap_or_else(|| "".to_string());
+    if !json_path.is_empty() {
+        std::fs::create_dir_all(&json_path)?;
+        log::info!("JSON output path set to: {}", json_path);
+    }
+
+    unsafe {
+        let mut client = D2Client::new();
+
+        let init_start = Instant::now();
+        client.initialize(&game_path)?;
+        let init_duration = init_start.elapsed();
+        log::info!(
+            "Initialization complete, version: {}, duration: {}ms",
+            VERSION,
+            init_duration.as_millis()
+        );
+
+        if args.seed.is_some() || args.act.is_some() || args.map.is_some() {
+            let seed = args.seed.unwrap_or(0xff00ff00);
+            dump_maps(&mut client, seed, args.difficulty, args.act, args.map, json_path);
+            return Ok(());
         }
     }
 
-    if let Some(map) = map_id {
-        if let Some(obj) = info.as_object_mut() {
-            obj.insert("map".to_string(), json!(map));
-        }
-    }
-
-    println!("\n{}", serde_json::to_string(&info).unwrap());
+    Ok(())
 }
+
+
+
 
 unsafe fn dump_maps(
     client: &mut D2Client,
@@ -71,9 +117,11 @@ unsafe fn dump_maps(
     difficulty: u32,
     act_id: Option<i32>,
     map_id: Option<u32>,
+    json_path: String,
 ) {
     let total_start = Instant::now();
     let mut map_count = 0;
+    let mut json_maps = vec![];
 
     if let Some(specific_map) = map_id {
         let start = Instant::now();
@@ -105,7 +153,12 @@ unsafe fn dump_maps(
             let start = Instant::now();
             match client.dump_map(seed, difficulty, level_id) {
                 Ok(map_data) => {
-                    println!("\n{}", serde_json::to_string(&map_data).unwrap());
+                    if json_path.is_empty() {
+                        println!("\n{}", serde_json::to_string(&map_data).unwrap());
+                    } else {
+                        json_maps.push(map_data);
+                    }
+                    
                     map_count += 1;
                     let duration = start.elapsed();
                     log::debug!(
@@ -123,6 +176,19 @@ unsafe fn dump_maps(
                 }
             }
         }
+        if !json_path.is_empty() {
+            let file_path = format!("{}/{}_{}.json", json_path, seed, difficulty);
+            
+            let json_data = SeedData {
+                seed,
+                difficulty,
+                levels: json_maps,
+            };
+            
+            let json_output = serde_json::to_string_pretty(&json_data).unwrap();
+            std::fs::write(&file_path, json_output).unwrap();
+            log::info!("Maps saved to {}", file_path);
+        }
     }
 
     let total_duration = total_start.elapsed();
@@ -133,122 +199,5 @@ unsafe fn dump_maps(
         map_count,
         total_duration.as_millis()
     );
-    println!();
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
-
-    // Set up logging
-    let log_level = match args.verbose {
-        0 => LevelFilter::Info,
-        1 => LevelFilter::Debug,
-        _ => LevelFilter::Trace,
-    };
-
-    configure_logging(log_level);
-
-    log::info!("d2-map starting, version: {}", VERSION);
-
-    if args.game_path.is_none() {
-        eprintln!("Usage: d2-map <GAME_PATH> [OPTIONS]");
-        eprintln!();
-        eprintln!("Options:");
-        eprintln!("  -s, --seed <SEED>           Map Seed");
-        eprintln!("  -d, --difficulty <DIFF>     Game Difficulty [0: Normal, 1: Nightmare, 2: Hell]");
-        eprintln!("  -a, --act <ACT>             Dump a specific act [0-4]");
-        eprintln!("  -m, --map <MAP>             Dump a specific Map");
-        eprintln!("  -v, --verbose               Increase logging level");
-        eprintln!();
-        eprintln!("Examples:");
-        eprintln!("  d2-map /path/to/d2 --seed 1122334 --difficulty 0 --act 0");
-        eprintln!("  d2-map /path/to/d2 --seed 1122334 --difficulty 2");
-        std::process::exit(1);
-    }
-
-    let game_path = args.game_path.unwrap();
-
-    unsafe {
-        let mut client = D2Client::new();
-
-        let init_start = Instant::now();
-        client.initialize(&game_path)?;
-        let init_duration = init_start.elapsed();
-        log::info!(
-            "Initialization complete, version: {}, duration: {}ms",
-            VERSION,
-            init_duration.as_millis()
-        );
-
-        // If arguments provided, run in batch mode
-        if args.seed.is_some() || args.act.is_some() || args.map.is_some() {
-            let seed = args.seed.unwrap_or(0xff00ff00);
-            dump_maps(&mut client, seed, args.difficulty, args.act, args.map);
-            return Ok(());
-        }
-
-        // Otherwise, run in interactive mode
-        println!("\n{{\"type\":\"init\"}}");
-
-        let stdin = io::stdin();
-        let mut reader = stdin.lock();
-        let mut buffer = String::new();
-
-        let mut current_seed = 0xff00ff00u32;
-        let mut current_difficulty = 0u32;
-        let mut current_act: Option<i32> = None;
-        let mut current_map: Option<u32> = None;
-
-        loop {
-            buffer.clear();
-            match reader.read_line(&mut buffer) {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    let line = buffer.trim();
-
-                    if line == "$exit" {
-                        break;
-                    } else if line.starts_with("$seed ") {
-                        if let Some(seed_str) = line.strip_prefix("$seed ") {
-                            if let Ok(seed) = seed_str.parse::<u32>() {
-                                current_seed = seed;
-                                dump_info(current_seed, current_difficulty, current_act, current_map);
-                            }
-                        }
-                    } else if line.starts_with("$difficulty ") {
-                        if let Some(diff_str) = line.strip_prefix("$difficulty ") {
-                            if let Ok(diff) = diff_str.parse::<u32>() {
-                                current_difficulty = diff;
-                                dump_info(current_seed, current_difficulty, current_act, current_map);
-                            }
-                        }
-                    } else if line.starts_with("$act ") {
-                        if let Some(act_str) = line.strip_prefix("$act ") {
-                            if let Ok(act) = act_str.parse::<i32>() {
-                                current_act = Some(act);
-                                dump_info(current_seed, current_difficulty, current_act, current_map);
-                            }
-                        }
-                    } else if line == "$map" {
-                        dump_maps(
-                            &mut client,
-                            current_seed,
-                            current_difficulty,
-                            current_act,
-                            current_map,
-                        );
-                        current_act = None;
-                        current_map = None;
-                        println!("\n{{\"type\":\"done\"}}");
-                    }
-                }
-                Err(e) => {
-                    log::error!("Error reading input: {}", e);
-                    break;
-                }
-            }
-        }
-    }
-
-    Ok(())
+    
 }

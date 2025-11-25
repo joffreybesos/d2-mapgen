@@ -1,10 +1,16 @@
-use crate::d2::d2_data::{get_act, get_object_class, npc_is_useless, object_is_useless};
+use crate::d2::d2_data::{get_act};
 use crate::d2::d2_ptrs::{D2Pointers, define_offsets};
 use crate::d2::d2_structs::*;
 use crate::map::Map;
-use serde_json::{json, Value};
+use crate::json::*;
+use crate::d2::data::objects::{GameObject, get_type, object_is_useless};
+use crate::d2::data::npcs::{GameNPC, get_npc_type, npc_is_useless};
+use crate::d2::data::areas::LevelName;
+
+use num_traits::FromPrimitive;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+
 
 pub struct D2Client {
     pub d2_client: D2ClientStruct,
@@ -239,7 +245,7 @@ impl D2Client {
         p_act: *mut Act,
         p_level: *mut Level,
         p_room2: *mut Room2,
-    ) -> Vec<Value> {
+    ) -> Vec<Object> {
         let mut objects = Vec::new();
 
         if p_level.is_null() || p_room2.is_null() {
@@ -265,43 +271,30 @@ impl D2Client {
 
             if unit_type == UNIT_TYPE_NPC {
                 if !npc_is_useless(txt_file_no) {
-                    objects.push(json!({
-                        "id": txt_file_no,
-                        "type": "npc",
-                        "x": coord_x,
-                        "y": coord_y,
-                    }));
+                    let npc = GameNPC::from_u32(txt_file_no).unwrap_or_default();
+                    objects.push(Object {
+                        id: txt_file_no,
+                        name: npc.to_string(),
+                        category: get_npc_type(&npc).to_string(),
+                        unit_type: "NPC".to_string(),
+                        x: coord_x as u32,
+                        y: coord_y as u32,
+                        is_good_exit: None,
+                    });
                 }
             } else if unit_type == UNIT_TYPE_OBJECT {
                 if !object_is_useless(txt_file_no) {
-                    let mut obj = json!({
-                        "id": txt_file_no,
-                        "type": "object",
-                        "x": coord_x,
-                        "y": coord_y,
-                    });
+                    let game_object = GameObject::from_u32(txt_file_no).unwrap_or_default();
+                    let obj = Object {
+                        id: txt_file_no,
+                        name: game_object.to_string(),
+                        category: get_type(&game_object).to_string(),
+                        unit_type: "Object".to_string(),
+                        x: coord_x as u32,
+                        y: coord_y as u32,
+                        is_good_exit: None,
+                    };
 
-                    if txt_file_no < 580 {
-                        if let Some(get_object_txt) = self.ptrs.d2common_pd2_get_object_txt {
-                            let txt = get_object_txt(txt_file_no);
-                            if !txt.is_null() {
-                                let operate_fn = std::ptr::read_unaligned(&(*txt).n_operate_fn) as i32;
-                                if operate_fn > -1 {
-                                    if let Ok(name) = CStr::from_ptr((*txt).sz_name.as_ptr()).to_str()
-                                    {
-                                        if let Some(class) =
-                                            get_object_class(txt_file_no, name, operate_fn)
-                                        {
-                                            if let Some(obj_map) = obj.as_object_mut() {
-                                                obj_map.insert("class".to_string(), json!(class));
-                                                obj_map.insert("op".to_string(), json!(operate_fn));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                     objects.push(obj);
                 }
             } else if unit_type == UNIT_TYPE_TILE {
@@ -316,17 +309,18 @@ impl D2Client {
                             let exit_level = std::ptr::read_unaligned(std::ptr::addr_of!((*p_room2_tile).p_level));
                             if !exit_level.is_null() {
                                 let object_id = (*exit_level).dw_level_no;
-                                let mut obj = json!({
-                                    "id": object_id,
-                                    "type": "exit",
-                                    "x": coord_x,
-                                    "y": coord_y,
-                                });
+                                let mut obj = Object {
+                                    id: object_id,
+                                    name: LevelName::from_u32(object_id).unwrap_or(LevelName::Unknown).to_string(),
+                                    category: "Exit".to_string(),
+                                    unit_type: "Exit".to_string(),
+                                    x: coord_x as u32,
+                                    y: coord_y as u32,
+                                    is_good_exit: None,
+                                };
 
                                 if self.is_good_exit(p_act, p_level, object_id) {
-                                    if let Some(obj_map) = obj.as_object_mut() {
-                                        obj_map.insert("isGoodExit".to_string(), json!(true));
-                                    }
+                                    obj.is_good_exit = Some(true);
                                 }
                                 objects.push(obj);
                             }
@@ -342,7 +336,7 @@ impl D2Client {
         objects
     }
 
-    pub unsafe fn dump_map(&mut self, seed: u32, difficulty: u32, level_code: u32) -> Result<Value, String> {
+    pub unsafe fn dump_map(&mut self, seed: u32, difficulty: u32, level_code: u32) -> Result<LevelData, String> {
         if let Some(get_level_text) = self.ptrs.d2common_pd2_get_level_text {
             let level_data = get_level_text(level_code);
             if level_data.is_null() {
@@ -403,7 +397,7 @@ impl D2Client {
             
 
             // Collect objects and collision data
-            let mut all_objects = Vec::new();
+            let mut all_objects: Vec<Object> = Vec::new();
             let mut p_room2 = (*p_level).p_room2_first;
             
             while !p_room2.is_null() {
@@ -415,7 +409,7 @@ impl D2Client {
                     }
                 }
 
-                let objects = self.dump_objects(p_act, p_level, p_room2);
+                let objects: Vec<Object> = self.dump_objects(p_act, p_level, p_room2);
                 all_objects.extend(objects);
 
                 if !(*p_room2).p_room1.is_null() {
@@ -457,21 +451,21 @@ impl D2Client {
                 map_data.push(row);
             }
 
-            Ok(json!({
-                "type": "map",
-                "id": level_code,
-                "name": level_name,
-                "offset": {
-                    "x": origin_x,
-                    "y": origin_y
+            Ok(LevelData {
+                id: level_code,
+                name: level_name.to_string(),
+                offset: Offset {
+                    x: origin_x as u32,
+                    y: origin_y as u32
                 },
-                "size": {
-                    "width": map_width,
-                    "height": map_height
+                size: Size {
+                    width: map_width as u32,
+                    height: map_height as u32
                 },
-                "objects": all_objects,
-                "map": map_data
-            }))
+                objects: all_objects,
+                map: map_data
+            })
+            
         } else {
             Err("Level text function not available".to_string())
         }
