@@ -24,4 +24,4 @@ echo   target\i686-pc-windows-msvc\release\d2-map.exe "E:/Dev/d2-mapserver/dist2
 echo.
 
 
-target\i686-pc-windows-msvc\release\d2-map.exe "E:/Dev/d2-mapserver/dist2/game" -s 12345 -d 2 -j "E:/Dev/!D2R/blacha/blacha-rs"
+target\i686-pc-windows-msvc\release\d2-map.exe "E:/Dev/d2-mapserver/dist2/game" -s 12345 -d 2 -j "."

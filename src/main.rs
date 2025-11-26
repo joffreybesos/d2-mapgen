@@ -10,6 +10,8 @@ use crate::json::SeedData;
 use clap::Parser;
 use log::LevelFilter;
 use std::time::Instant;
+use std::path::Path;
+use std::path::PathBuf;
 
 use crate::logger::configure_logging;
 
@@ -73,18 +75,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("  -v, --verbose               Increase logging level");  
         eprintln!();
         eprintln!("Examples:");
-        eprintln!("  d2-map /path/to/d2 --seed 1122334 --difficulty 0 --act 0");
-        eprintln!("  d2-map /path/to/d2 --seed 1122334 --difficulty 2");
+        eprintln!("  d2-map \"C:\\Games\\D2LoD\" --seed 1122334 --difficulty 0 --map 1");
+        eprintln!("  d2-map \"C:\\Games\\D2LoD\" --seed 1122334 --difficulty 2 --json-path \"C:\\Windows\\Temp\"");
         std::process::exit(1);
     }
 
     let game_path = args.game_path.unwrap();
-
-    let json_path = args.json_path.unwrap_or_else(|| "".to_string());
-    if !json_path.is_empty() {
-        std::fs::create_dir_all(&json_path)?;
-        log::info!("JSON output path set to: {}", json_path);
-    }
+    let json_path: PathBuf = format_json_path(args.json_path)?;
 
     unsafe {
         let mut client = D2Client::new();
@@ -109,6 +106,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
+fn format_json_path(json_path: Option<String>) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if json_path.is_none() {
+        return Ok(PathBuf::new());
+    }
+
+    let json_path_str = json_path.unwrap();
+    let path = Path::new(&json_path_str);
+    std::fs::create_dir_all(path)?;
+    
+    match path.canonicalize() {
+        Ok(canonical_path) => {
+            let display_path = canonical_path.to_string_lossy();
+            let normal_path = if display_path.starts_with(r"\\?\") {
+                &display_path[4..] // Remove the \\?\ prefix
+            } else {
+                &display_path
+            };
+            log::info!("JSON output path set to: {}", normal_path);
+            Ok(canonical_path)
+        }
+        Err(_) => {
+            log::error!("Failed to create JSON output path: {:?}", json_path_str);
+            Ok(path.to_path_buf())
+        }
+    }
+}
+
 
 
 unsafe fn dump_maps(
@@ -117,7 +141,7 @@ unsafe fn dump_maps(
     difficulty: u32,
     act_id: Option<i32>,
     map_id: Option<u32>,
-    json_path: String,
+    json_path: PathBuf,
 ) {
     let total_start = Instant::now();
     let mut map_count = 0;
@@ -153,7 +177,7 @@ unsafe fn dump_maps(
             let start = Instant::now();
             match client.dump_map(seed, difficulty, level_id) {
                 Ok(map_data) => {
-                    if json_path.is_empty() {
+                    if json_path.as_os_str().is_empty() {
                         println!("\n{}", serde_json::to_string(&map_data).unwrap());
                     } else {
                         json_maps.push(map_data);
@@ -176,9 +200,9 @@ unsafe fn dump_maps(
                 }
             }
         }
-        if !json_path.is_empty() {
-            let file_path = format!("{}/{}_{}.json", json_path, seed, difficulty);
-            
+        if !json_path.as_os_str().is_empty() {
+            let file_path = json_path.join(format!("D2_{}_{}.json", seed, difficulty));
+
             let json_data = SeedData {
                 seed,
                 difficulty,
@@ -187,7 +211,7 @@ unsafe fn dump_maps(
             
             let json_output = serde_json::to_string_pretty(&json_data).unwrap();
             std::fs::write(&file_path, json_output).unwrap();
-            log::info!("Maps saved to {}", file_path);
+            log::info!("Maps saved to {}", file_path.display());
         }
     }
 
