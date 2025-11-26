@@ -117,13 +117,7 @@ fn format_json_path(json_path: Option<String>) -> Result<PathBuf, Box<dyn std::e
     
     match path.canonicalize() {
         Ok(canonical_path) => {
-            let display_path = canonical_path.to_string_lossy();
-            let normal_path = if display_path.starts_with(r"\\?\") {
-                &display_path[4..] // Remove the \\?\ prefix
-            } else {
-                &display_path
-            };
-            log::info!("JSON output path set to: {}", normal_path);
+            log::info!("JSON output path set to: {}", canonical_path.to_string_lossy().replace("\\\\?\\", ""));
             Ok(canonical_path)
         }
         Err(_) => {
@@ -211,7 +205,7 @@ unsafe fn dump_maps(
             
             let json_output = serde_json::to_string_pretty(&json_data).unwrap();
             std::fs::write(&file_path, json_output).unwrap();
-            log::info!("Maps saved to {}", file_path.display());
+            log::info!("Maps saved to {}", file_path.display().to_string().replace("\\\\?\\", ""));
         }
     }
 
